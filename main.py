@@ -1,20 +1,19 @@
+import os
+import sys
 import discord
 from discord.ext import tasks, commands
 from discord import app_commands, Interaction
 import datetime
 import pytz
-import os
 from flask import Flask
 import threading
 from collections import defaultdict
 
 # Verificare token
-import sys
-
 TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
     print("❌ EROARE: DISCORD_TOKEN nu este setat! Verifică variabila de mediu în Railway.")
-    sys.exit(1)
+    sys.exit()
 else:
     print("✅ Tokenul a fost găsit. Botul pornește.")
 
