@@ -63,7 +63,7 @@ def time_remaining(end_str):
 async def on_ready():
     await bot.tree.sync()
     update_ticket_status.start()
-    print("🧕 Botul mafiot este online!")
+    print("🤵 Botul mafiot este online!")
 
 @bot.event
 async def on_reaction_add(reaction, user):
@@ -95,7 +95,7 @@ async def on_reaction_add(reaction, user):
     msg_id = reaction.message.id
     for channel_id, tickets in TICKET_DATA.items():
         for ticket in tickets:
-            if ticket.get("message_id") == msg_id and ticket["author"] != user.name:
+            if ticket.get("message_id") == msg_id:
                 ticket["paid"] = True
                 save_backup()
                 return
@@ -150,7 +150,8 @@ async def control(interaction: Interaction):
         return
     msg = "**🎟️ Tickete active:**\n"
     for t in active:
-        msg += f"🟢 ID: `{t['player_id']}` | **{t['author']}** | ⏱️ {format_hour_only(t['start'])}-{format_hour_only(t['end'])} | ⌛ {time_remaining(t['end'])}\n"
+        taxa = "✅ plătită" if t['paid'] else "❌ neplătită"
+        msg += f"🟢 ID: `{t['player_id']}` | **{t['author']}** | ⏱️ {format_hour_only(t['start'])}-{format_hour_only(t['end'])} | ⌛ {time_remaining(t['end'])} | Taxă: {taxa}\n"
     await interaction.response.send_message(msg)
 
 @bot.tree.command(name="status")
@@ -170,7 +171,8 @@ async def today(interaction: Interaction):
         return
     msg = "📅 **Tickete de azi:**\n"
     for t in today:
-        msg += f"🟢 ID: `{t['player_id']}` | **{t['author']}** | ⏱️ {format_hour_only(t['start'])} - {format_hour_only(t['end'])}\n"
+        taxa = "✅ plătită" if t['paid'] else "❌ neplătită"
+        msg += f"🟢 ID: `{t['player_id']}` | **{t['author']}** | ⏱️ {format_hour_only(t['start'])} - {format_hour_only(t['end'])} | Taxă: {taxa}\n"
     await interaction.response.send_message(msg)
 
 @bot.tree.command(name="cauta")
@@ -204,7 +206,7 @@ async def raport(interaction: Interaction):
 @bot.tree.command(name="help", description="Afișează toate comenzile disponibile")
 async def help_command(interaction: Interaction):
     msg = (
-        "📜 **Comenzi disponibile:**\n"
+        "📘 **Comenzi disponibile:**\n"
         "\n`/ticket <ID>` - Creează un ticket de muncă pentru 3 ore"
         "\n`/control` - Afișează ticketele active din canal"
         "\n`/status` - Afișează câte tickete sunt active/inactive"
