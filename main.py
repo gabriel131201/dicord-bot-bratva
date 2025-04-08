@@ -100,7 +100,7 @@ async def ticket_command(interaction: Interaction, player_id: int):
     embed.add_field(name="👤 Jucător ID", value=str(player_id), inline=True)
     embed.add_field(name="⏱️ Start", value=format_hour_only(ticket['start']), inline=True)
     embed.add_field(name="🕒 Sfârșit", value=format_hour_only(ticket['end']), inline=True)
-    embed.add_field(name="👮‍♂️ Creat de", value=f"**{interaction.user.name}**", inline=False)
+    embed.add_field(name="🤵‍♂️ Creat de", value=f"**{interaction.user.name}**", inline=False)
     embed.set_footer(text="Status taxă: neplătită")
     await interaction.response.send_message(embed=embed)
     msg = await interaction.original_response()
@@ -164,19 +164,6 @@ async def cauta(interaction: Interaction, player_id: int):
         msg += f"{c} | ⏱️ {format_hour_only(t['start'])}-{format_hour_only(t['end'])} | 👤 **{t['author']}** | Taxă: {s}\n"
     await interaction.response.send_message(msg)
 
-@bot.tree.command(name="statistici")
-async def statistici(interaction: Interaction):
-    cid = str(interaction.channel_id)
-    stats = defaultdict(lambda: {"platite": 0, "neplatite": 0, "total": 0})
-    for t in TICKET_DATA.get(cid, []):
-        a = stats[t['author']]
-        a["total"] += 1
-        a["platite" if t['paid'] else "neplatite"] += 1
-    msg = "📊 **Statistici:**\n"
-    for user, s in stats.items():
-        msg += f"\n**{user}**\n✅ Plătite: {s['platite']}\n❌ Neplătite: {s['neplatite']}\n📦 Total: {s['total']}\n"
-    await interaction.response.send_message(msg)
-
 @bot.tree.command(name="raport")
 async def raport(interaction: Interaction):
     cid = str(interaction.channel_id)
@@ -199,7 +186,6 @@ async def help_command(interaction: Interaction):
         "\n`/status` - Afișează câte tickete sunt active/inactive"
         "\n`/today` - Tickete create în ziua curentă"
         "\n`/cauta <ID>` - Caută tickete după ID"
-        "\n`/statistici` - Taxe plătite/neplătite pe utilizator"
         "\n`/raport` - Raport complet pentru lideri"
     )
     await interaction.response.send_message(msg)
