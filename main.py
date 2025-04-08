@@ -70,11 +70,15 @@ async def on_reaction_add(reaction, user):
     if user.bot:
         return
 
+    print(f"[DEBUG] Reacție adăugată de {user.name} pe mesajul cu ID {reaction.message.id}")
+
     msg_id = reaction.message.id
     for channel_id, tickets in TICKET_DATA.items():
         for ticket in tickets:
+            print(f"[DEBUG] Verific ticket {ticket['id']} cu mesaj ID {ticket.get('message_id')}")
             if ticket.get("message_id") == msg_id:
                 ticket["paid"] = True
+                print(f"[DEBUG] Taxa marcată ca plătită pentru ticket {ticket['id']}")
                 save_backup()
                 return
 
