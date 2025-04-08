@@ -9,9 +9,15 @@ import threading
 from collections import defaultdict
 
 # Verificare token
+import sys
+
 TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
-    raise ValueError("❌ DISCORD_TOKEN nu este setat! Verifică variabilele de mediu în Railway.")
+    print("❌ EROARE: DISCORD_TOKEN nu este setat! Verifică variabila de mediu în Railway.")
+    sys.exit(1)
+else:
+    print("✅ Tokenul a fost găsit. Botul pornește.")
+
 
 intents = discord.Intents.default()
 intents.messages = True
