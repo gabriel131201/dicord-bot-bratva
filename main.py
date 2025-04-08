@@ -8,7 +8,11 @@ from flask import Flask
 import threading
 from collections import defaultdict
 
+# Verificare token
 TOKEN = os.getenv("DISCORD_TOKEN")
+if not TOKEN:
+    raise ValueError("❌ DISCORD_TOKEN nu este setat! Verifică variabilele de mediu în Railway.")
+
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
@@ -26,7 +30,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Donul veghează. Botul este online."
+    return "✅ Donul veghează. Botul este online."
 
 def run_flask():
     app.run(host='0.0.0.0', port=8080)
@@ -64,7 +68,8 @@ async def ticket_command(interaction: Interaction, player_id: int):
     end = now + datetime.timedelta(hours=3)
     cid = str(interaction.channel_id)
     ticket_id = int(now.timestamp())
-    if cid not in TICKET_DATA: TICKET_DATA[cid] = []
+    if cid not in TICKET_DATA:
+        TICKET_DATA[cid] = []
     ticket = {
         "id": ticket_id,
         "player_id": player_id,
@@ -77,12 +82,12 @@ async def ticket_command(interaction: Interaction, player_id: int):
     TICKET_DATA[cid].append(ticket)
     save_backup()
 
-    embed = discord.Embed(title=f"Contract #{ticket_id}", color=discord.Color.light_grey())
-    embed.add_field(name="ID jucător", value=str(player_id), inline=True)
-    embed.add_field(name="Start", value=format_hour_only(ticket['start']), inline=True)
-    embed.add_field(name="Sfârșit", value=format_hour_only(ticket['end']), inline=True)
-    embed.add_field(name="Creat de", value=f"{interaction.user.name}", inline=False)
-    embed.set_footer(text="Taxa: neplătită.")
+    embed = discord.Embed(title=f"📄 Contract #{ticket_id}", color=discord.Color.dark_grey())
+    embed.add_field(name="🧾 ID jucător", value=str(player_id), inline=True)
+    embed.add_field(name="🕒 Start", value=format_hour_only(ticket['start']), inline=True)
+    embed.add_field(name="⏳ Sfârșit", value=format_hour_only(ticket['end']), inline=True)
+    embed.add_field(name="👤 Creat de", value=f"**{interaction.user.name}**", inline=False)
+    embed.set_footer(text="💸 Taxă: neplătită.")
 
     await interaction.response.send_message(embed=embed)
     msg = await interaction.original_response()
@@ -97,5 +102,6 @@ async def update_ticket_status():
                 ticket['expired'] = True
     save_backup()
 
+# Pornește Flask + botul Discord
 threading.Thread(target=run_flask).start()
 bot.run(TOKEN)
