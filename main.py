@@ -17,7 +17,6 @@ if not TOKEN:
 else:
     print("✅ Tokenul a fost găsit. Botul pornește.")
 
-
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
@@ -47,7 +46,7 @@ def save_backup():
             for t in tickets:
                 status = "activ" if not t['expired'] else "inactiv"
                 taxa = "plătită" if t['paid'] else "neplătită"
-                f.write(f"Contract {t['id']}: început la {t['start']}, terminat la {t['end']}, inițiat de {t['author']}, ID jucător: {t['player_id']}, status: {status}, taxă: {taxa}\n")
+                f.write(f"Ticket {t['id']}: făcut la {t['start']}, terminat la {t['end']}, creat de {t['author']}, ID: {t['player_id']}, status: {status}, taxă: {taxa}\n")
             f.write("\n")
 
 def get_now(): return datetime.datetime.now(BUCHAREST_TZ)
@@ -66,6 +65,17 @@ async def on_ready():
     update_ticket_status.start()
     print("🤵 Botul mafiot este online!")
 
+@bot.event
+async def on_reaction_add(reaction, user):
+    if user.bot: return
+    msg_id = reaction.message.id
+    for channel_id, tickets in TICKET_DATA.items():
+        for ticket in tickets:
+            if ticket.get("message_id") == msg_id and ticket["author"] != user.name:
+                ticket["paid"] = True
+                save_backup()
+                return
+
 @bot.tree.command(name="ticket")
 @app_commands.describe(player_id="ID-ul jucătorului")
 async def ticket_command(interaction: Interaction, player_id: int):
@@ -73,8 +83,7 @@ async def ticket_command(interaction: Interaction, player_id: int):
     end = now + datetime.timedelta(hours=3)
     cid = str(interaction.channel_id)
     ticket_id = int(now.timestamp())
-    if cid not in TICKET_DATA:
-        TICKET_DATA[cid] = []
+    if cid not in TICKET_DATA: TICKET_DATA[cid] = []
     ticket = {
         "id": ticket_id,
         "player_id": player_id,
@@ -87,17 +96,113 @@ async def ticket_command(interaction: Interaction, player_id: int):
     TICKET_DATA[cid].append(ticket)
     save_backup()
 
-    embed = discord.Embed(title=f"📄 Contract #{ticket_id}", color=discord.Color.dark_grey())
-    embed.add_field(name="🧾 ID jucător", value=str(player_id), inline=True)
-    embed.add_field(name="🕒 Start", value=format_hour_only(ticket['start']), inline=True)
-    embed.add_field(name="⏳ Sfârșit", value=format_hour_only(ticket['end']), inline=True)
-    embed.add_field(name="👤 Creat de", value=f"**{interaction.user.name}**", inline=False)
-    embed.set_footer(text="💸 Taxă: neplătită.")
-
+    embed = discord.Embed(title=f"🎫 Ticket #{ticket_id}", color=0x00ff00)
+    embed.add_field(name="👤 Jucător ID", value=str(player_id), inline=True)
+    embed.add_field(name="⏱️ Start", value=format_hour_only(ticket['start']), inline=True)
+    embed.add_field(name="🕒 Sfârșit", value=format_hour_only(ticket['end']), inline=True)
+    embed.add_field(name="👮‍♂️ Creat de", value=f"**{interaction.user.name}**", inline=False)
+    embed.set_footer(text="Status taxă: neplătită")
     await interaction.response.send_message(embed=embed)
     msg = await interaction.original_response()
     ticket["message_id"] = msg.id
     save_backup()
+
+@bot.tree.command(name="tickets_reset", description="(comandă ascunsă)", extras={"hidden": True})
+@app_commands.checks.has_permissions(administrator=True)
+async def tickets_reset(interaction: Interaction):
+    TICKET_DATA[str(interaction.channel_id)] = []
+    save_backup()
+    try:
+        await interaction.response.send_message("✅", ephemeral=True)
+    except:
+        pass
+
+@bot.tree.command(name="control")
+async def control(interaction: Interaction):
+    cid = str(interaction.channel_id)
+    active = [t for t in TICKET_DATA.get(cid, []) if not t['expired']]
+    if not active:
+        await interaction.response.send_message("Nu există tickete active.")
+        return
+    msg = "**🎟️ Tickete active:**\n"
+    for t in active:
+        msg += f"🟢 ID: `{t['player_id']}` | **{t['author']}** | ⏱️ {format_hour_only(t['start'])}-{format_hour_only(t['end'])} | ⌛ {time_remaining(t['end'])}\n"
+    await interaction.response.send_message(msg)
+
+@bot.tree.command(name="status")
+async def status(interaction: Interaction):
+    cid = str(interaction.channel_id)
+    data = TICKET_DATA.get(cid, [])
+    a, i = sum(not t['expired'] for t in data), sum(t['expired'] for t in data)
+    await interaction.response.send_message(f"✅ Tickete active: {a}\n❌ Tickete inactive: {i}")
+
+@bot.tree.command(name="today")
+async def today(interaction: Interaction):
+    cid = str(interaction.channel_id)
+    azi = get_now().date()
+    today = [t for t in TICKET_DATA.get(cid, []) if parse_time(t['start']).date() == azi]
+    if not today:
+        await interaction.response.send_message("Niciun ticket creat azi.")
+        return
+    msg = "📅 **Tickete de azi:**\n"
+    for t in today:
+        msg += f"🟢 ID: `{t['player_id']}` | **{t['author']}** | ⏱️ {format_hour_only(t['start'])} - {format_hour_only(t['end'])}\n"
+    await interaction.response.send_message(msg)
+
+@bot.tree.command(name="cauta")
+@app_commands.describe(player_id="ID-ul jucătorului")
+async def cauta(interaction: Interaction, player_id: int):
+    cid = str(interaction.channel_id)
+    tickets = [t for t in TICKET_DATA.get(cid, []) if t['player_id'] == player_id]
+    if not tickets:
+        await interaction.response.send_message(f"Nu am găsit tickete pentru `{player_id}`.")
+        return
+    msg = f"🔍 Tickete pentru `{player_id}`:\n"
+    for t in tickets:
+        s = "✅ plătită" if t['paid'] else "❌ neplătită"
+        c = "🟢 activ" if not t['expired'] else "🔴 inactiv"
+        msg += f"{c} | ⏱️ {format_hour_only(t['start'])}-{format_hour_only(t['end'])} | 👤 **{t['author']}** | Taxă: {s}\n"
+    await interaction.response.send_message(msg)
+
+@bot.tree.command(name="statistici")
+async def statistici(interaction: Interaction):
+    cid = str(interaction.channel_id)
+    stats = defaultdict(lambda: {"platite": 0, "neplatite": 0, "total": 0})
+    for t in TICKET_DATA.get(cid, []):
+        a = stats[t['author']]
+        a["total"] += 1
+        a["platite" if t['paid'] else "neplatite"] += 1
+    msg = "📊 **Statistici:**\n"
+    for user, s in stats.items():
+        msg += f"\n**{user}**\n✅ Plătite: {s['platite']}\n❌ Neplătite: {s['neplatite']}\n📦 Total: {s['total']}\n"
+    await interaction.response.send_message(msg)
+
+@bot.tree.command(name="raport")
+async def raport(interaction: Interaction):
+    cid = str(interaction.channel_id)
+    stats = defaultdict(lambda: {"platite": 0, "neplatite": 0, "total": 0})
+    for t in TICKET_DATA.get(cid, []):
+        a = stats[t['author']]
+        a["total"] += 1
+        a["platite" if t['paid'] else "neplatite"] += 1
+    msg = "📋 **Raport lideri:**\n"
+    for user, s in stats.items():
+        msg += f"\n👤 **{user}**\n✅ Plătite: {s['platite']}\n❌ Neplatite: {s['neplatite']}\n📦 Total: {s['total']}\n"
+    await interaction.response.send_message(msg)
+
+@bot.tree.command(name="help", description="Afișează toate comenzile disponibile")
+async def help_command(interaction: Interaction):
+    msg = (
+        "📘 **Comenzi disponibile:**\n"
+        "\n`/ticket <ID>` - Creează un ticket de muncă pentru 3 ore"
+        "\n`/control` - Afișează ticketele active din canal"
+        "\n`/status` - Afișează câte tickete sunt active/inactive"
+        "\n`/today` - Tickete create în ziua curentă"
+        "\n`/cauta <ID>` - Caută tickete după ID"
+        "\n`/statistici` - Taxe plătite/neplătite pe utilizator"
+        "\n`/raport` - Raport complet pentru lideri"
+    )
+    await interaction.response.send_message(msg)
 
 @tasks.loop(minutes=60)
 async def update_ticket_status():
@@ -107,6 +212,6 @@ async def update_ticket_status():
                 ticket['expired'] = True
     save_backup()
 
-# Pornește Flask + botul Discord
+# Pornire Flask + Bot
 threading.Thread(target=run_flask).start()
 bot.run(TOKEN)
