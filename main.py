@@ -17,12 +17,7 @@ if not TOKEN:
 else:
     print("✅ Tokenul a fost găsit. Botul pornește.")
 
-intents = discord.Intents.default()
-intents.messages = True
-intents.message_content = True
-intents.reactions = True
-intents.guilds = True
-intents.members = True
+intents = discord.Intents.all()
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -70,21 +65,13 @@ async def on_reaction_add(reaction, user):
     if user.bot:
         return
 
-    try:
-        channel = reaction.message.channel
-        msg_id = reaction.message.id
-        print(f"[DEBUG] Reacție detectată de {user.name} pe mesaj ID {msg_id}")
-
-        for channel_id, tickets in TICKET_DATA.items():
-            for ticket in tickets:
-                print(f"[DEBUG] Compar cu ticket {ticket['id']} -> msg_id salvat: {ticket.get('message_id')}")
-                if ticket.get("message_id") == msg_id:
-                    ticket["paid"] = True
-                    print(f"[DEBUG] ✅ Taxă marcată ca plătită pentru ticket {ticket['id']}")
-                    save_backup()
-                    return
-    except Exception as e:
-        print(f"[EROARE on_reaction_add] {e}")
+    msg_id = reaction.message.id
+    for channel_id, tickets in TICKET_DATA.items():
+        for ticket in tickets:
+            if ticket.get("message_id") == msg_id:
+                ticket["paid"] = True
+                save_backup()
+                return
 
 @bot.tree.command(name="ticket")
 @app_commands.describe(player_id="ID-ul jucătorului")
