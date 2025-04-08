@@ -70,28 +70,6 @@ async def on_reaction_add(reaction, user):
     if user.bot:
         return
 
-    allowed_emojis = [
-        "slay",
-        "r",
-        "SadCatThumb",
-        "pngtree3dtexturegoldencrownpngim",
-        "988431067868430377",
-        "827145185866547211"
-    ]
-
-    emoji = reaction.emoji
-    emoji_name = ""
-    emoji_id = ""
-
-    if isinstance(emoji, str):
-        emoji_name = emoji
-    else:
-        emoji_name = emoji.name
-        emoji_id = str(emoji.id)
-
-    if emoji_name not in allowed_emojis and emoji_id not in allowed_emojis:
-        return
-
     msg_id = reaction.message.id
     for channel_id, tickets in TICKET_DATA.items():
         for ticket in tickets:
