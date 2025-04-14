@@ -56,7 +56,11 @@ def time_remaining(end_str):
 
 @bot.event
 async def on_ready():
-    await bot.tree.sync()
+    try:
+        synced = await bot.tree.sync()
+        print(f"✅ Comenzi sincronizate: {len(synced)}")
+    except Exception as e:
+        print(f"Eroare la sync: {e}")
     update_ticket_status.start()
     print("🤵 Botul mafiot este online!")
 
@@ -143,7 +147,7 @@ async def today(interaction: Interaction):
     if not today:
         await interaction.response.send_message("Niciun ticket creat azi.")
         return
-    msg = "📅 **Tickete de azi:**\n"
+    msg = "🗓️ **Tickete de azi:**\n"
     for t in today:
         taxa = "✅ plătită" if t['paid'] else "❌ neplătită"
         msg += f"🟢 ID: `{t['player_id']}` | **{t['author']}** | ⏱️ {format_hour_only(t['start'])} - {format_hour_only(t['end'])} | Taxă: {taxa}\n"
