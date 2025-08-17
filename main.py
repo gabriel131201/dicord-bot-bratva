@@ -85,19 +85,12 @@ async def on_app_command_error(interaction: Interaction, error):
         except discord.InteractionResponded:
             await interaction.followup.send_message("❌ Nu ai permisiunea pentru această comandă.", ephemeral=True)
 
-# --- helper: normalizează orice reacție la o formă RANDABILĂ (emoji real sau mențiune custom) ---
-def display_emoji(e) -> str:
-    # Unicode
-    if isinstance(e, str):
-        return e
-    # Custom (Emoji/PartialEmoji)
-    if isinstance(e, (discord.Emoji, discord.PartialEmoji)):
-        if e.id is None:  # fallback
-            return e.name if e.name else str(e)
-        prefix = "a" if getattr(e, "animated", False) else ""
-        return f"<{prefix}:{e.name}:{e.id}>"
-    # fallback absolut
-    return str(e)
+# --- helper: formatează orice emoji într-o formă randabilă (unicode sau custom <a:name:id> / <:name:id>) ---
+def display_emoji_from_payload(pe: discord.PartialEmoji) -> str:
+    if pe.id is None:             # emoji unicode
+        return pe.name
+    prefix = "a" if pe.animated else ""
+    return f"<{prefix}:{pe.name}:{pe.id}>"
 
 @bot.event
 async def on_ready():
@@ -118,22 +111,24 @@ async def on_ready():
     update_ticket_status.start()  # rulează la 10 minute
     print("🤵 Botul mafiot este online!")
 
-# --- BIFE (oricine, orice emoji) ---
+# --- BIFE (oricine, orice emoji) — folosim on_raw_reaction_add ca să prindem și emoji externe/Nitro ---
 @bot.event
-async def on_reaction_add(reaction, user):
-    if user.bot:
+async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
+    # ignorăm reacțiile botului
+    if payload.user_id == bot.user.id:
         return
-    msg_id = reaction.message.id
+    msg_id = payload.message_id
+    # găsim ticketul după message_id
     for channel_id, tickets in TICKET_DATA.items():
         for ticket in tickets:
             if ticket.get("message_id") == msg_id:
                 if ticket.get('deleted'):
                     return  # șters => ignorăm
-                # marchează "plătit" când există cel puțin o bifă
+                # marchează "plătit" la prima bifă
                 if not ticket.get("paid"):
                     ticket["paid"] = True
-                # reține setul de emoji-uri bifate pe acest ticket (unic pe ticket), ca FORMĂ RANDABILĂ
-                disp = display_emoji(reaction.emoji)
+                # adaugă emoji-ul într-o formă randabilă (unicode sau <:name:id>/ <a:name:id>)
+                disp = display_emoji_from_payload(payload.emoji)
                 emojis = set(ticket.get("emojis", []))
                 emojis.add(disp)
                 ticket["emojis"] = list(emojis)
@@ -321,10 +316,9 @@ async def bifate(interaction: Interaction):
         return
 
     ordered = sorted(counts.items(), key=lambda x: x[1], reverse=True)
-    # afișare „frumos” – emoji-ul real + count
     msg = "🔢 **Bife pe emoji (tickete valide):**\n"
     for em, c in ordered:
-        msg += f"{em} x {c}\n"
+        msg += f"{em} x {c}\n"   # {em} e chiar emoji-ul (unicode sau <:name:id>)
     await interaction.response.send_message(msg)
 
 @bot.tree.command(name="resync", description="Forțează sincronizarea comenzilor pe acest server")
