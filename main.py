@@ -85,6 +85,20 @@ async def on_app_command_error(interaction: Interaction, error):
         except discord.InteractionResponded:
             await interaction.followup.send_message("❌ Nu ai permisiunea pentru această comandă.", ephemeral=True)
 
+# --- helper: normalizează orice reacție la o formă RANDABILĂ (emoji real sau mențiune custom) ---
+def display_emoji(e) -> str:
+    # Unicode
+    if isinstance(e, str):
+        return e
+    # Custom (Emoji/PartialEmoji)
+    if isinstance(e, (discord.Emoji, discord.PartialEmoji)):
+        if e.id is None:  # fallback
+            return e.name if e.name else str(e)
+        prefix = "a" if getattr(e, "animated", False) else ""
+        return f"<{prefix}:{e.name}:{e.id}>"
+    # fallback absolut
+    return str(e)
+
 @bot.event
 async def on_ready():
     try:
@@ -118,9 +132,10 @@ async def on_reaction_add(reaction, user):
                 # marchează "plătit" când există cel puțin o bifă
                 if not ticket.get("paid"):
                     ticket["paid"] = True
-                # reține setul de emoji-uri bifate pe acest ticket (unic pe ticket)
+                # reține setul de emoji-uri bifate pe acest ticket (unic pe ticket), ca FORMĂ RANDABILĂ
+                disp = display_emoji(reaction.emoji)
                 emojis = set(ticket.get("emojis", []))
-                emojis.add(str(reaction.emoji))
+                emojis.add(disp)
                 ticket["emojis"] = list(emojis)
                 save_backup()
                 return
@@ -306,6 +321,7 @@ async def bifate(interaction: Interaction):
         return
 
     ordered = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+    # afișare „frumos” – emoji-ul real + count
     msg = "🔢 **Bife pe emoji (tickete valide):**\n"
     for em, c in ordered:
         msg += f"{em} x {c}\n"
