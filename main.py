@@ -37,7 +37,8 @@ def home():
     return "✅ Donul veghează. Botul este online."
 
 def run_flask():
-    app.run(host='0.0.0.0', port=8080)
+    port = int(os.getenv("PORT", "8080"))
+    app.run(host='0.0.0.0', port=port)
 
 def save_backup():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
@@ -87,11 +88,20 @@ async def on_app_command_error(interaction: Interaction, error):
 @bot.event
 async def on_ready():
     try:
-        synced = await bot.tree.sync()
-        print(f"✅ Comenzi sincronizate: {len(synced)}")
+        # sincronizare pe fiecare guild ca să apară instant
+        for g in bot.guilds:
+            bot.tree.copy_global_to(guild=discord.Object(id=g.id))
+            synced = await bot.tree.sync(guild=discord.Object(id=g.id))
+            print(f"✅ Comenzi sincronizate pe {g.name}: {[c.name for c in synced]}")
+        # (opțional) și global, ca fallback
+        try:
+            synced_global = await bot.tree.sync()
+            print(f"🌐 Comenzi globale sincronizate: {[c.name for c in synced_global]}")
+        except Exception as e2:
+            print(f"Warn la sync global: {e2}")
     except Exception as e:
         print(f"Eroare la sync: {e}")
-    update_ticket_status.start()  # rulează acum la 10 minute
+    update_ticket_status.start()  # rulează la 10 minute
     print("🤵 Botul mafiot este online!")
 
 # --- BIFE (oricine, orice emoji) ---
@@ -301,6 +311,23 @@ async def bifate(interaction: Interaction):
         msg += f"{em} x {c}\n"
     await interaction.response.send_message(msg)
 
+@bot.tree.command(name="resync", description="Forțează sincronizarea comenzilor pe acest server")
+@app_commands.check(role_check)
+async def resync(interaction: Interaction):
+    try:
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("Această comandă trebuie folosită pe server.", ephemeral=True)
+            return
+        bot.tree.copy_global_to(guild=discord.Object(id=guild.id))
+        synced = await bot.tree.sync(guild=discord.Object(id=guild.id))
+        await interaction.response.send_message(
+            f"✅ Resync ok. Comenzi pe **{guild.name}**: " + ", ".join(c.name for c in synced),
+            ephemeral=True
+        )
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Eroare la resync: {e}", ephemeral=True)
+
 @bot.tree.command(name="help", description="Afișează toate comenzile disponibile")
 async def help_command(interaction: Interaction):
     msg = (
@@ -312,10 +339,11 @@ async def help_command(interaction: Interaction):
         "\n`/cauta <ID>` - Caută tickete după ID (auto-delete în 2 min)"
         "\n`/raport` - (Lider/Colider) Raport complet + ștergeri"
         "\n`/bifate` - (Lider/Colider) Număr de tickete bifate pe emoji (ex. ✝️ x 3, 🦈 x 21)"
+        "\n`/resync` - (Lider/Colider) Forțează sincronizarea comenzilor pe server"
     )
     await interaction.response.send_message(msg)
 
-# ↓↓↓ schimbat din 60 în 10 minute
+# rulează la 10 minute
 @tasks.loop(minutes=10)
 async def update_ticket_status():
     for channel_id, tickets in TICKET_DATA.items():
