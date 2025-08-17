@@ -1,7 +1,6 @@
 import os
 import sys
 import asyncio
-import re
 import discord
 from discord.ext import tasks, commands
 from discord import app_commands, Interaction
@@ -50,13 +49,11 @@ def save_backup():
                 taxa = "plătită" if t['paid'] else "neplătită"
                 deleted = "DA" if t.get('deleted') else "NU"
                 deleted_by = t.get('deleted_by_name') or "-"
-                # scriem pe scurt emoji-urile
-                def fmt_meta(m):
-                    if m.get("id"):
-                        return f"{'a' if m.get('animated') else ''}:{m.get('name')}:{m.get('id')}"
-                    return m.get("name") or "?"
+                # sumar emoji pt. log (nu afectează /bifate)
                 metas = t.get('emojis_meta') or []
-                emojis_txt = ",".join(fmt_meta(m) for m in metas) if metas else "-"
+                def fmt(m): 
+                    return f"{'a' if m.get('animated') else ''}:{m.get('name')}:{m.get('id')}" if m.get('id') else (m.get('name') or "?")
+                emojis_txt = ",".join(fmt(m) for m in metas) if metas else "-"
                 f.write(
                     f"Ticket {t['id']}: făcut la {t['start']}, terminat la {t['end']}, creat de {t['author']}, "
                     f"ID: {t['player_id']}, status: {status}, taxă: {taxa}, emojis:[{emojis_txt}], "
@@ -95,35 +92,24 @@ async def on_app_command_error(interaction: Interaction, error):
 @bot.event
 async def on_ready():
     try:
-        # sincronizare pe fiecare guild ca să apară instant
+        # sincronizare pe fiecare guild (FĂRĂ copy_global_to -> evităm dubluri)
         for g in bot.guilds:
-            bot.tree.copy_global_to(guild=discord.Object(id=g.id))
             synced = await bot.tree.sync(guild=discord.Object(id=g.id))
             print(f"✅ Comenzi sincronizate pe {g.name}: {[c.name for c in synced]}")
-        # (opțional) și global, ca fallback
-        try:
-            synced_global = await bot.tree.sync()
-            print(f"🌐 Comenzi globale sincronizate: {[c.name for c in synced_global]}")
-        except Exception as e2:
-            print(f"Warn la sync global: {e2}")
+        # (nu mai facem sync global aici, pentru a nu dubla)
     except Exception as e:
         print(f"Eroare la sync: {e}")
     update_ticket_status.start()  # rulează la 10 minute
     print("🤵 Botul mafiot este online!")
 
-# --- UTIL: creăm meta din payload (id, name, animated) + cheie unică pentru set ---
+# --- UTIL: meta pentru emoji din payload (id, name, animated) ---
 def meta_from_partial(pe: discord.PartialEmoji):
-    return {
-        "id": pe.id,                # int sau None (unicode)
-        "name": pe.name,            # nume sau caracter
-        "animated": pe.animated     # True/False (doar custom)
-    }
+    return {"id": pe.id, "name": pe.name, "animated": pe.animated}
 
 def key_from_meta(m):
-    # grupăm pe ID dacă există, altfel pe unicode char
     return m["id"] if m.get("id") else ("U", m.get("name"))
 
-# --- BIFE (oricine, orice emoji) — on_raw_reaction_add prinde și emoji externe/Nitro ---
+# --- BIFE (oricine, orice emoji) — prindem și emoji externe/Nitro ---
 @bot.event
 async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     if payload.user_id == bot.user.id:
@@ -136,7 +122,6 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
                     return  # șters => ignorăm
                 if not ticket.get("paid"):
                     ticket["paid"] = True
-                # adăugăm meta în set unic per ticket
                 metas = ticket.get("emojis_meta") or []
                 keys = {key_from_meta(m) for m in metas}
                 m = meta_from_partial(payload.emoji)
@@ -144,7 +129,7 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
                 if k not in keys:
                     metas.append(m)
                 ticket["emojis_meta"] = metas
-                # compat vechi: ținem și vechiul câmp 'emojis' ca afișabil
+                # compat vechi (randabil imediat)
                 if m["id"]:
                     disp = f"<{'a' if m.get('animated') else ''}:{m.get('name')}:{m.get('id')}>"
                 else:
@@ -207,8 +192,8 @@ async def ticket_command(interaction: Interaction, player_id: int):
         "deleted_by_id": None,
         "deleted_by_name": None,
         "deleted_at": None,
-        "emojis_meta": [],   # listă de dicturi {id,name,animated}
-        "emojis": []         # compat vechi (stringuri randabile)
+        "emojis_meta": [],
+        "emojis": []
     }
     TICKET_DATA[cid].append(ticket)
     save_backup()
@@ -277,4 +262,110 @@ async def cauta(interaction: Interaction, player_id: int):
     if not tickets:
         await interaction.response.send_message(f"Nu am găsit tickete pentru `{player_id}`.", delete_after=120)
         return
-    msg = f"🔍 Tickete pentru
+    msg = f"🔍 Tickete pentru `{player_id}`:\n"
+    for t in tickets:
+        s = "✅ plătită" if t['paid'] else "❌ neplătită"
+        c = "🟢 activ" if not t['expired'] else "🔴 inactiv"
+        msg += f"{c} | ⏱️ {format_hour_only(t['start'])}-{format_hour_only(t['end'])} | 👤 **{t['author']}** | Taxă: {s}\n"
+    await interaction.response.send_message(msg, delete_after=120)
+
+@bot.tree.command(name="raport")
+@app_commands.check(role_check)
+async def raport(interaction: Interaction):
+    cid = str(interaction.channel_id)
+    # statistici per autor (excludem tickete șterse)
+    stats = defaultdict(lambda: {"platite": 0, "neplatite": 0, "total": 0})
+    for t in TICKET_DATA.get(cid, []):
+        if t.get('deleted'):
+            continue
+        a = stats[t['author']]
+        a["total"] += 1
+        a["platite" if t['paid'] else "neplatite"] += 1
+
+    # ștergeri (numai din cele marcate ca deleted)
+    deletions = defaultdict(int)
+    for t in TICKET_DATA.get(cid, []):
+        if t.get('deleted'):
+            name = t.get('deleted_by_name') or "necunoscut"
+            deletions[name] += 1
+
+    msg = "📋 **Raport lideri:**\n"
+    if not stats:
+        msg += "_Nu există date._\n"
+    for user, s in stats.items():
+        msg += f"\n👤 **{user}**\n✅ Plătite: {s['platite']}\n❌ Neplatite: {s['neplatite']}\n📦 Total: {s['total']}\n"
+
+    msg += "\n🗑️ **Ștergeri (din canal):**\n"
+    if deletions:
+        for name, cnt in deletions.items():
+            msg += f"• {name}: {cnt}\n"
+    else:
+        msg += "_Nicio ștergere înregistrată._\n"
+
+    await interaction.response.send_message(msg)
+
+@bot.tree.command(name="bifate", description="Afișează câte tickete au fost bifate cu fiecare emoji (excluzând cele șterse)")
+@app_commands.check(role_check)
+async def bifate(interaction: Interaction):
+    cid = str(interaction.channel_id)
+    counts = defaultdict(int)
+    for t in TICKET_DATA.get(cid, []):
+        if t.get('deleted'):
+            continue
+        # folosim varianta randabilă stocată la compat ('emojis')
+        for em in set(t.get('emojis', []) or []):
+            counts[em] += 1
+
+    if not counts:
+        await interaction.response.send_message("Nu există tickete bifate în acest canal.", delete_after=120)
+        return
+
+    ordered = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+    msg = "🔢 **Bife pe emoji (tickete valide):**\n"
+    for em, c in ordered:
+        msg += f"{em} x {c}\n"
+    await interaction.response.send_message(msg)
+
+@bot.tree.command(name="resync", description="Forțează sincronizarea comenzilor pe acest server")
+@app_commands.check(role_check)
+async def resync(interaction: Interaction):
+    try:
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("Această comandă trebuie folosită pe server.", ephemeral=True)
+            return
+        synced = await bot.tree.sync(guild=discord.Object(id=guild.id))
+        await interaction.response.send_message(
+            f"✅ Resync ok. Comenzi pe **{guild.name}**: " + ", ".join(c.name for c in synced),
+            ephemeral=True
+        )
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Eroare la resync: {e}", ephemeral=True)
+
+@bot.tree.command(name="help", description="Afișează toate comenzile disponibile")
+async def help_command(interaction: Interaction):
+    msg = (
+        "📘 **Comenzi disponibile:**\n"
+        "\n`/ticket <ID>` - Creează un ticket de muncă pentru 3 ore"
+        "\n`/control` - Afișează ticketele active din canal (auto-delete în 2 min)"
+        "\n`/status` - (Lider/Colider) Afișează câte tickete sunt active/inactive"
+        "\n`/today` - Tickete create în ziua curentă (auto-delete în 2 min)"
+        "\n`/cauta <ID>` - Caută tickete după ID (auto-delete în 2 min)"
+        "\n`/raport` - (Lider/Colider) Raport complet + ștergeri"
+        "\n`/bifate` - (Lider/Colider) Număr de tickete bifate pe emoji (ex. ✝️ x 3, 🦈 x 21)"
+        "\n`/resync` - (Lider/Colider) Forțează sincronizarea comenzilor pe server"
+    )
+    await interaction.response.send_message(msg)
+
+# rulează la 10 minute
+@tasks.loop(minutes=10)
+async def update_ticket_status():
+    for channel_id, tickets in TICKET_DATA.items():
+        for ticket in tickets:
+            if not ticket['expired'] and not ticket.get('deleted') and get_now() >= parse_time(ticket['end']):
+                ticket['expired'] = True
+    save_backup()
+
+# Pornire Flask + Bot
+threading.Thread(target=run_flask).start()
+bot.run(TOKEN)
