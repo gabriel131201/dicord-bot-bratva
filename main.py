@@ -49,7 +49,6 @@ def save_backup():
                 taxa = "plătită" if t['paid'] else "neplătită"
                 deleted = "DA" if t.get('deleted') else "NU"
                 deleted_by = t.get('deleted_by_name') or "-"
-                # sumar emoji pt. log (nu afectează /bifate)
                 metas = t.get('emojis_meta') or []
                 def fmt(m): 
                     return f"{'a' if m.get('animated') else ''}:{m.get('name')}:{m.get('id')}" if m.get('id') else (m.get('name') or "?")
@@ -92,55 +91,111 @@ async def on_app_command_error(interaction: Interaction, error):
 @bot.event
 async def on_ready():
     try:
-        # sincronizare pe fiecare guild (FĂRĂ copy_global_to -> evităm dubluri)
+        # sincronizare pe fiecare guild (fără copy_global_to, ca să nu dublăm)
         for g in bot.guilds:
             synced = await bot.tree.sync(guild=discord.Object(id=g.id))
             print(f"✅ Comenzi sincronizate pe {g.name}: {[c.name for c in synced]}")
-        # (nu mai facem sync global aici, pentru a nu dubla)
     except Exception as e:
         print(f"Eroare la sync: {e}")
     update_ticket_status.start()  # rulează la 10 minute
     print("🤵 Botul mafiot este online!")
 
-# --- UTIL: meta pentru emoji din payload (id, name, animated) ---
-def meta_from_partial(pe: discord.PartialEmoji):
-    return {"id": pe.id, "name": pe.name, "animated": pe.animated}
+# ===== Helpers pentru emoji =====
+def meta_from_emoji(e):
+    # e poate fi unicode (str) sau discord.Emoji/discord.PartialEmoji
+    if isinstance(e, str):
+        return {"id": None, "name": e, "animated": False}, e
+    if isinstance(e, (discord.Emoji, discord.PartialEmoji)):
+        disp = f"<{'a' if getattr(e, 'animated', False) else ''}:{e.name}:{e.id}>" if e.id else (e.name or str(e))
+        return {"id": e.id, "name": e.name, "animated": getattr(e, "animated", False)}, disp
+    # fallback
+    return {"id": None, "name": str(e), "animated": False}, str(e)
 
-def key_from_meta(m):
-    return m["id"] if m.get("id") else ("U", m.get("name"))
+def build_reactions_snapshot(msg: discord.Message):
+    """Construiește setul ACTUAL de reacții (unic pe emoji), din mesaj."""
+    metas = []
+    displays = []
+    seen = set()
+    for r in msg.reactions:
+        # r.count > 0 => emoji prezent
+        m, disp = meta_from_emoji(r.emoji)
+        key = m["id"] if m["id"] is not None else ("U", m["name"])
+        if key in seen:
+            continue
+        seen.add(key)
+        metas.append(m)
+        displays.append(disp)
+    return metas, displays
 
-# --- BIFE (oricine, orice emoji) — prindem și emoji externe/Nitro ---
+async def refresh_ticket_reactions(guild_id: int, channel_id: int, message_id: int, ticket: dict):
+    """Citește mesajul și sincronizează exact reacțiile curente în ticket."""
+    guild = bot.get_guild(guild_id) if guild_id else None
+    channel = bot.get_channel(channel_id)
+    if channel is None and guild is not None:
+        channel = guild.get_channel(channel_id)
+    if channel is None:
+        return  # nu putem citi mesajul; lăsăm starea cum e
+    try:
+        msg = await channel.fetch_message(message_id)
+    except Exception:
+        return
+    metas, displays = build_reactions_snapshot(msg)
+    ticket["emojis_meta"] = metas
+    ticket["emojis"] = displays
+    ticket["paid"] = bool(displays)  # plătit doar dacă există cel puțin o reacție
+    save_backup()
+
+# ===== Reacții: sincronizare la ADD/REMOVE/CLEAR =====
 @bot.event
 async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     if payload.user_id == bot.user.id:
         return
     msg_id = payload.message_id
+    ch_id = payload.channel_id
     for channel_id, tickets in TICKET_DATA.items():
         for ticket in tickets:
-            if ticket.get("message_id") == msg_id:
-                if ticket.get('deleted'):
-                    return  # șters => ignorăm
-                if not ticket.get("paid"):
-                    ticket["paid"] = True
-                metas = ticket.get("emojis_meta") or []
-                keys = {key_from_meta(m) for m in metas}
-                m = meta_from_partial(payload.emoji)
-                k = key_from_meta(m)
-                if k not in keys:
-                    metas.append(m)
-                ticket["emojis_meta"] = metas
-                # compat vechi (randabil imediat)
-                if m["id"]:
-                    disp = f"<{'a' if m.get('animated') else ''}:{m.get('name')}:{m.get('id')}>"
-                else:
-                    disp = m.get("name")
-                old = set(ticket.get("emojis", []))
-                old.add(disp)
-                ticket["emojis"] = list(old)
+            if ticket.get("message_id") == msg_id and not ticket.get("deleted"):
+                await refresh_ticket_reactions(payload.guild_id or 0, ch_id, msg_id, ticket)
+                return
+
+@bot.event
+async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent):
+    if payload.user_id == bot.user.id:
+        return
+    msg_id = payload.message_id
+    ch_id = payload.channel_id
+    for channel_id, tickets in TICKET_DATA.items():
+        for ticket in tickets:
+            if ticket.get("message_id") == msg_id and not ticket.get("deleted"):
+                await refresh_ticket_reactions(payload.guild_id or 0, ch_id, msg_id, ticket)
+                return
+
+@bot.event
+async def on_raw_reaction_clear(payload: discord.RawReactionClearEvent):
+    msg_id = payload.message_id
+    ch_id = payload.channel_id
+    for channel_id, tickets in TICKET_DATA.items():
+        for ticket in tickets:
+            if ticket.get("message_id") == msg_id and not ticket.get("deleted"):
+                # toate reacțiile au dispărut
+                ticket["emojis_meta"] = []
+                ticket["emojis"] = []
+                ticket["paid"] = False
                 save_backup()
                 return
 
-# --- MARCARE DELETE când se șterge mesajul ticketului direct din Discord ---
+@bot.event
+async def on_raw_reaction_clear_emoji(payload: discord.RawReactionClearEmojiEvent):
+    # o singură reacție (emoji) a fost ștearsă complet; refacem snapshot-ul
+    msg_id = payload.message_id
+    ch_id = payload.channel_id
+    for channel_id, tickets in TICKET_DATA.items():
+        for ticket in tickets:
+            if ticket.get("message_id") == msg_id and not ticket.get("deleted"):
+                await refresh_ticket_reactions(payload.guild_id or 0, ch_id, msg_id, ticket)
+                return
+
+# ===== Ștergere mesaj: marcăm ticketul ca deleted =====
 @bot.event
 async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
     msg_id = payload.message_id
@@ -154,7 +209,7 @@ async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
                 try:
                     if payload.guild_id:
                         guild = bot.get_guild(payload.guild_id)
-                        me = getattr(guild, "me", None) or guild.get_member(bot.user.id) if guild else None
+                        me = getattr(guild, "me", None) or (guild.get_member(bot.user.id) if guild else None)
                         if guild and me and me.guild_permissions.view_audit_log:
                             async for entry in guild.audit_logs(action=discord.AuditLogAction.message_delete, limit=5):
                                 ch_ok = getattr(entry.extra, "channel", None)
@@ -193,7 +248,8 @@ async def ticket_command(interaction: Interaction, player_id: int):
         "deleted_by_name": None,
         "deleted_at": None,
         "emojis_meta": [],
-        "emojis": []
+        "emojis": [],
+        "message_id": None,
     }
     TICKET_DATA[cid].append(ticket)
     save_backup()
@@ -203,7 +259,7 @@ async def ticket_command(interaction: Interaction, player_id: int):
     embed.add_field(name="⏱️ Start", value=format_hour_only(ticket['start']), inline=True)
     embed.add_field(name="🕒 Sfârșit", value=format_hour_only(ticket['end']), inline=True)
     embed.add_field(name="🤵‍♂️ Creat de", value=f"**{interaction.user.name}**", inline=False)
-    embed.set_footer(text="Status taxă: neplătită • Poți bifa cu orice emoji (și Nitro)")
+    embed.set_footer(text="Status taxă: neplătită • Poți bifa cu orice emoji")
     await interaction.response.send_message(embed=embed)
     msg = await interaction.original_response()
     ticket["message_id"] = msg.id
@@ -273,7 +329,6 @@ async def cauta(interaction: Interaction, player_id: int):
 @app_commands.check(role_check)
 async def raport(interaction: Interaction):
     cid = str(interaction.channel_id)
-    # statistici per autor (excludem tickete șterse)
     stats = defaultdict(lambda: {"platite": 0, "neplatite": 0, "total": 0})
     for t in TICKET_DATA.get(cid, []):
         if t.get('deleted'):
@@ -282,7 +337,6 @@ async def raport(interaction: Interaction):
         a["total"] += 1
         a["platite" if t['paid'] else "neplatite"] += 1
 
-    # ștergeri (numai din cele marcate ca deleted)
     deletions = defaultdict(int)
     for t in TICKET_DATA.get(cid, []):
         if t.get('deleted'):
@@ -312,7 +366,7 @@ async def bifate(interaction: Interaction):
     for t in TICKET_DATA.get(cid, []):
         if t.get('deleted'):
             continue
-        # folosim varianta randabilă stocată la compat ('emojis')
+        # folosim starea ACTUALĂ a reacțiilor (sincronizată la add/remove)
         for em in set(t.get('emojis', []) or []):
             counts[em] += 1
 
@@ -352,7 +406,7 @@ async def help_command(interaction: Interaction):
         "\n`/today` - Tickete create în ziua curentă (auto-delete în 2 min)"
         "\n`/cauta <ID>` - Caută tickete după ID (auto-delete în 2 min)"
         "\n`/raport` - (Lider/Colider) Raport complet + ștergeri"
-        "\n`/bifate` - (Lider/Colider) Număr de tickete bifate pe emoji (ex. ✝️ x 3, 🦈 x 21)"
+        "\n`/bifate` - (Lider/Colider) Număr de tickete bifate pe emoji (doar cele care sunt încă pe mesaje)"
         "\n`/resync` - (Lider/Colider) Forțează sincronizarea comenzilor pe server"
     )
     await interaction.response.send_message(msg)
